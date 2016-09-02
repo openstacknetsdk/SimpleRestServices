@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Text;
+using System.Text.RegularExpressions;
 using JSIStudios.SimpleRESTServices.Client.Json;
 using JSIStudios.SimpleRESTServices.Core;
 #if !NET35
@@ -391,6 +392,7 @@ namespace JSIStudios.SimpleRESTServices.Client
         /// <para>If <paramref name="executeCallback"/> is <c>null</c>.</para>
         /// </exception>
         /// <exception cref="NotSupportedException">If <paramref name="method"/> is not supported by the service.</exception>
+        /// <exception cref="ArgumentException">If <paramref name="headers"/> contains an nvalid Range header value. It must one of the following formats: bytes=0-16 or 0-16 or 16.</exception>
         public virtual Response ExecuteRequest(Uri url, HttpMethod method, Func<HttpWebResponse, bool, Response> responseBuilderCallback, Dictionary<string, string> headers, Dictionary<string, string> queryStringParameters, RequestSettings settings, Func<HttpWebRequest, string> executeCallback)
         {
             if (url == null)
@@ -434,6 +436,13 @@ namespace JSIStudios.SimpleRESTServices.Client
                     {
                         foreach (var header in headers)
                         {
+                            // Range cannot be set explicitly, and AddRange must be used instead because ... Microsoft says so.
+                            if (header.Key.ToLower() == "range")
+                            {
+                                ApplyRangeHeader(req, header.Value);
+                                continue;
+                            }
+
                             req.Headers.Add(header.Key, header.Value);
                         }
                     }
@@ -476,6 +485,41 @@ namespace JSIStudios.SimpleRESTServices.Client
 
                 return response;
             }, settings.Non200SuccessCodes, settings.RetryCount, settings.RetryDelay);
+        }
+
+        private static void ApplyRangeHeader(HttpWebRequest req, string value)
+        {
+            var match = Regex.Match(value, @"((?<unit>.+)=)?(?<a>[\d]+)(-(?<b>[\d]+))?");
+            var a = match.Groups["a"];
+            if (!match.Success || !a.Success)
+            {
+                throw new ArgumentException("Invalid Range header value. It must use one of the following formats: bytes=0-16 or 0-16 or 16");
+            }
+            var unit = match.Groups["unit"];
+            var b = match.Groups["b"];
+
+            if (unit.Success)
+            {
+                if (b.Success)
+                {
+                    req.AddRange(unit.Value, long.Parse(a.Value), long.Parse(b.Value));
+                }
+                else
+                {
+                    req.AddRange(unit.Value, long.Parse(a.Value));
+                }
+            }
+            else
+            {
+                if (b.Success)
+                {
+                    req.AddRange(long.Parse(a.Value), long.Parse(b.Value));
+                }
+                else
+                {
+                    req.AddRange(long.Parse(a.Value));
+                }
+            }
         }
 
         /// <summary>
